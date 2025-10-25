@@ -12,7 +12,7 @@ import {
 
 // 创建axios实例
 const api = axios.create({
-    baseURL: process.env.REACT_APP_API_URL || '/api',
+    baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api',
     timeout: 5000,
     headers: {
         'Content-Type': 'application/json'
@@ -53,25 +53,20 @@ api.interceptors.response.use(
  * 获取学生详情
  * @param studentId 学生ID
  */
-export const fetchStudentDetail = async (studentId: number): Promise<StudentDetailResponse> => {
-    const response = await api.get(`/students/${studentId}`);
-    return response.data;
+export const fetchStudentDetail = async (id: string): Promise<StudentDetailResponse> => {
+    const response = await api.get(`/public/students/query-by-idcard/${id}`);
+
+    const { data } = response
+    console.log('response:', response)
+    if (data.code !== 200) {
+        console.log('业务错误触发:', data.message);
+        throw new Error(data.message || '未查询到该学生信息');
+    }
+
+    return data;
 };
 
-/**
- * 获取学生列表
- * @param params 查询参数
- */
-export const fetchStudentList = async (params: {
-    page: number;
-    page_size: number;
-    keyword?: string;
-    class_id?: number;
-    grade_id?: number;
-}): Promise<StudentListResponse> => {
-    const response = await api.get('/students', { params });
-    return response.data;
-};
+
 
 /**
  * 更新订单支付状态
@@ -136,6 +131,11 @@ export const fetchStudentOrders = async (studentId: number): Promise<{
     message: string;
 }> => {
     const response = await api.get(`/students/${studentId}/orders`);
+    return response.data;
+};
+
+export const fetchPublicSchoolDetail = async (id: number) => {
+    const response = await api.get(`/public/school/${id}`);
     return response.data;
 };
 

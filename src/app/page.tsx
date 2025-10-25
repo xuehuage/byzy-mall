@@ -2,45 +2,19 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { fetchPublicSchoolDetail, fetchStudentDetail } from './services/publicApi';
+import { fetchPublicSchoolDetail, fetchStudentDetail } from '@/api/studentApi';
+import { StudentDetailResponse } from '@/types/student.types';
+import { getPaymentStatusText, getUniformTypeText } from '../utils/genderEnums';
 
-// 定义学生信息类型
-interface StudentInfo {
-  id: string;
-  name: string;
-  gender: string;
-  birthDate: string;
-  className: string;
-  grade: string;
-  enrollmentDate: string;
-  studentId: string;
-}
 
-// 定义订单信息类型
-interface OrderInfo {
-  id: string;
-  uniformType: string;
-  size: string;
-  quantity: number;
-  unitPrice: number;
-  totalPrice: number;
-  paymentStatus: string;
-}
-
-// 定义查询结果类型
-interface QueryResult {
-  student: StudentInfo;
-  orders: OrderInfo[];
-}
 
 export default function Home() {
   const [idNumber, setIdNumber] = useState('');
-  const [result, setResult] = useState<QueryResult | null>(null);
+  const [result, setResult] = useState<StudentDetailResponse['data'] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const searchParams = useSearchParams();
   const [schoolName, setSchoolName] = useState<String>('学生校服信息查询系统');
-
 
 
   // 处理身份证号查询
@@ -60,66 +34,28 @@ export default function Home() {
       setError('请输入有效的18位身份证号码');
       return;
     }
-
+    console.log('idNumber:', idNumber)
     setLoading(true);
+    const getStudent = async () => {
+      console.log('开始查询学生信息'); // 确认函数是否执行
+      try {
+        setError('');
+        const res = await fetchStudentDetail(idNumber.trim());
+        console.log('查询成功，数据:', res); // 成功时的日志
+        const next = res.data
+        setResult(next)
+      } catch (err) {
+        // 打印捕获到的错误（关键：确认是否进入这里）
+        console.log('page.tsx捕获到错误:', err);
+        // 兼容不同类型的错误（可能是Error对象，也可能是字符串）
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(errorMessage);
+      } finally {
+        setLoading(false)
+      }
+    };
 
-    try {
-
-      fetchStudentDetail(idNumber.trim()).then(res => {
-        console.log('res:::', res)
-      })
-
-      // // 模拟API请求
-      // await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // // 提取身份证号中的信息
-      // const id = idNumber.trim();
-      // const birthYear = id.substring(6, 10);
-      // const birthMonth = id.substring(10, 12);
-      // const birthDay = id.substring(12, 14);
-
-      // // 修复性别判断的类型错误：先将字符转换为数字
-      // const genderCode = parseInt(id.charAt(16), 10);
-      // const gender = genderCode % 2 === 1 ? '男' : '女';
-
-      // // 模拟返回结果
-      // setResult({
-      //   student: {
-      //     id,
-      //     name: '张三',
-      //     gender,
-      //     birthDate: `${birthYear}-${birthMonth}-${birthDay}`,
-      //     className: '高三(1)班',
-      //     grade: '高三',
-      //     enrollmentDate: '2021-09-01',
-      //     studentId: 'G3C1-001'
-      //   },
-      //   orders: [
-      //     {
-      //       id: '1001',
-      //       uniformType: '夏装',
-      //       size: '175',
-      //       quantity: 1,
-      //       unitPrice: 120.00,
-      //       totalPrice: 120.00,
-      //       paymentStatus: '未付款'
-      //     },
-      //     {
-      //       id: '1002',
-      //       uniformType: '春秋装',
-      //       size: '175',
-      //       quantity: 1,
-      //       unitPrice: 180.00,
-      //       totalPrice: 180.00,
-      //       paymentStatus: '未付款'
-      //     }
-      //   ]
-      // });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '查询失败，请稍后重试');
-    } finally {
-      setLoading(false);
-    }
+    getStudent();
   };
 
   // 处理回车键查询
@@ -203,25 +139,10 @@ export default function Home() {
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">姓名</p>
                       <p className="text-base font-medium">{result.student.name}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">性别</p>
-                      <p className="text-base font-medium">{result.student.gender}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">出生日期</p>
-                      <p className="text-base font-medium">{result.student.birthDate}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">学号</p>
-                      <p className="text-base font-medium">{result.student.studentId}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">年级</p>
-                      <p className="text-base font-medium">{result.student.grade}</p>
-                    </div>
+
                     <div>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">班级</p>
-                      <p className="text-base font-medium">{result.student.className}</p>
+                      <p className="text-base font-medium">{result.student.class_name}</p>
                     </div>
                   </div>
                 </div>
@@ -234,11 +155,11 @@ export default function Home() {
                 </div>
                 <div className="divide-y divide-gray-200 dark:divide-gray-700">
                   {result.orders.map(order => (
-                    <div key={order.id} className="p-5">
+                    <div key={order.student_id} className="p-5">
                       <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                         <div>
                           <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">校服类型</p>
-                          <p className="text-base font-medium">{order.uniformType}</p>
+                          <p className="text-base font-medium">{getUniformTypeText(order.uniform_type)}</p>
                         </div>
                         <div>
                           <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">尺码</p>
@@ -250,19 +171,19 @@ export default function Home() {
                         </div>
                         <div>
                           <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">单价</p>
-                          <p className="text-base font-medium">¥{order.unitPrice.toFixed(2)}</p>
+                          <p className="text-base font-medium">¥{order.price}</p>
                         </div>
                         <div className="col-span-2">
                           <div className="flex justify-between items-center">
                             <div>
                               <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">总价</p>
-                              <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">¥{order.totalPrice.toFixed(2)}</p>
+                              <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">¥{order.total_amount}</p>
                             </div>
-                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${order.paymentStatus === '未付款'
+                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${order.payment_status === 0
                               ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
                               : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
                               }`}>
-                              {order.paymentStatus}
+                              {getPaymentStatusText(order.payment_status)}
                             </span>
                           </div>
                         </div>
