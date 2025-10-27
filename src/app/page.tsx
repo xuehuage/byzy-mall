@@ -1,12 +1,19 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { fetchPublicSchoolDetail, fetchStudentDetail } from '@/api/studentApi';
-import { StudentDetailResponse } from '@/types/student.types';
+import { StudentDetailResponse, StudentUniformOrder } from '@/types/student.types';
 import { getPaymentStatusText, getUniformTypeText } from '../utils/genderEnums';
+import { Drawer, Button, RadioChangeEvent, Radio } from 'antd'; // 引入 Ant Design 组件
 
-
+// 支付方式类型定义
+type PaymentMethod = 2 | 3;
+const style: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+};
 
 export default function Home() {
   const [idNumber, setIdNumber] = useState('');
@@ -15,8 +22,9 @@ export default function Home() {
   const [error, setError] = useState('');
   const searchParams = useSearchParams();
   const [schoolName, setSchoolName] = useState<String>('学生校服信息查询系统');
-
-
+  const [drawerVisible, setDrawerVisible] = useState(false); // 控制抽屉显示
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod>(3); // 选中的支付方式，默认微信支付
+  const router = useRouter();
   // 处理身份证号查询
   const handleSearch = async () => {
     // 重置状态
@@ -63,6 +71,21 @@ export default function Home() {
     if (e.key === 'Enter') {
       handleSearch();
     }
+  };
+  // 检查是否有未付款订单
+  const hasUnpaidOrders = (): boolean => {
+    if (!result?.orders || result.orders.length === 0) return false;
+    return result.orders.some((order: StudentUniformOrder) => order.payment_status === 0);
+  };
+
+
+
+  // 处理去付款
+  const handlePayment = () => {
+    setDrawerVisible(false);
+    // 跳转到新页面，这里假设新页面路径为'/payment'
+    // 可以携带选中的支付方式和订单信息
+    router.push(`/payment?method=${selectedPaymentMethod}&id=${idNumber.trim()}`);
   };
 
   useEffect(() => {
@@ -192,7 +215,18 @@ export default function Home() {
                   ))}
                 </div>
               </div>
+              {/* 选择支付方式按钮 - 有订单且存在未付款时显示 */}
+              {hasUnpaidOrders() && (
+                <Button
+                  type="primary"
+                  onClick={() => setDrawerVisible(true)}
+                  className="w-full"
+                >
+                  选择支付方式
+                </Button>
+              )}
             </div>
+
           )}
         </div>
       </main>
@@ -201,6 +235,73 @@ export default function Home() {
       <footer className="py-4 px-4 text-center text-sm text-gray-500 dark:text-gray-400 mt-8">
         <p>© {new Date().getFullYear()} 河池市宜州区百盈制衣版权所有</p>
       </footer>
+      {/* 支付方式选择抽屉 */}
+      <Drawer
+        title="选择支付方式"
+        placement="bottom"
+        onClose={() => setDrawerVisible(false)}
+        open={drawerVisible}
+        // 控制抽屉高度（按需调整，例如300px）
+        height={300}
+        // 隐藏默认右上角额外内容区域
+        extra={null}
+        // 自定义抽屉样式（减少内边距）
+        className="payment-drawer"
+      >
+        {/* 抽屉内容区 */}
+        <div className="py-4">
+          <Radio.Group
+            value={selectedPaymentMethod}
+            onChange={(e: RadioChangeEvent) => setSelectedPaymentMethod(e.target.value)}
+            style={style}
+            // 移除inline样式，使用className控制间距
+            className="space-y-4"
+          >
+            {/* 微信支付选项（带图标） */}
+            <Radio
+              value={3}
+            >
+              <span className="flex items-center gap-3 py-2">
+                <img
+                  src="/icons/wechat-pay.svg"
+                  alt="微信支付"
+                  className="w-6 h-6 object-contain"
+                />
+                <span>微信支付</span>
+              </span>
+
+            </Radio>
+
+            {/* 支付宝选项（带图标） */}
+            <Radio
+              value={2}
+
+            >
+              <span className="flex items-center gap-3 py-2">
+                <img
+                  src="/icons/alipay.svg"
+                  alt="支付宝"
+                  className="w-6 h-6 object-contain"
+                />
+                <span>支付宝</span>
+              </span>
+
+            </Radio>
+          </Radio.Group>
+        </div>
+
+        {/* 抽屉底部区域（放置去付款按钮） */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t">
+          <Button
+            type="primary"
+            onClick={handlePayment}
+            className="w-full" // 占满屏幕宽度
+            size="large"
+          >
+            去付款
+          </Button>
+        </div>
+      </Drawer>
     </div>
   );
 }

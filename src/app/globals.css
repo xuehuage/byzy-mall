@@ -37,3 +37,15 @@ body {
 .animate-fadeIn {
   animation: fadeIn 0.3s ease-out forwards;
 }
+
+.payment-drawer .ant-drawer-content-wrapper {
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+}
+
+.payment-drawer .ant-drawer-body {
+  padding: 0 24px;
+  /* 移除默认上下内边距，通过内容区自定义 */
+  overflow: hidden;
+  /* 避免内容滚动 */
+}

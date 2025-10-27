@@ -8,6 +8,7 @@
     "start": "next start  -p 3001"
   },
   "dependencies": {
+    "antd": "^5.27.6",
     "axios": "^1.12.2",
     "next": "15.5.5",
     "react": "19.1.0",
