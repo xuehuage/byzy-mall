@@ -8,7 +8,6 @@ import { PrepayParams, PrepayResponse } from '@/types/payment.types';
  */
 export const fetchPrepay = async (params: PrepayParams): Promise<PrepayResponse> => {
     const response = await axiosInstance.post('/public/prepay', params);
-    console.log('response::', response)
     const { data } = response;
 
     // 统一错误处理（根据后端状态码判断）
@@ -19,9 +18,9 @@ export const fetchPrepay = async (params: PrepayParams): Promise<PrepayResponse>
     return data;
 };
 
-// 可添加其他支付相关API（如查询支付状态、退款等）
+
 export const fetchPaymentStatus = async (orderNo: string) => {
-    const response = await axiosInstance.get(`/payment/status?orderNo=${orderNo}`);
+    const response = await axiosInstance.get(`/public/payment/status/${orderNo}`);
     return response.data;
 };
 

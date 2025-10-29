@@ -8,7 +8,7 @@ const axiosInstance: AxiosInstance = axios.create({
     // 基础URL从环境变量获取，默认本地API地址
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api',
     // 超时时间统一设置为5秒
-    timeout: 5000,
+    timeout: 20000,
     // 默认请求头配置
     headers: {
         'Content-Type': 'application/json'
@@ -42,9 +42,14 @@ axiosInstance.interceptors.response.use(
     (error) => {
         // 统一错误处理
         console.error('响应拦截器错误:', error);
+        let message = ''
+        if (error.status === 429) {
+            message = '服务器拥堵，请稍后再试。'
+        }
+        const next = { ...error, message: message }
+        console.error('响应拦截器错误next:', next);
 
-
-        return Promise.reject(error);
+        return Promise.reject(next);
     }
 );
 
