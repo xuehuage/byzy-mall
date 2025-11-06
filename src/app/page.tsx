@@ -6,6 +6,7 @@ import { fetchPublicSchoolDetail, fetchStudentDetail } from '@/api/studentApi';
 import { StudentDetailResponse, StudentUniformOrder } from '@/types/student.types';
 import { getPaymentStatusText, getUniformTypeText } from '../utils/genderEnums';
 import { Drawer, Button, RadioChangeEvent, Radio } from 'antd'; // 引入 Ant Design 组件
+import { formatPriceValue } from 'src/utils/formatter';
 
 // 支付方式类型定义
 type PaymentMethod = 2 | 3;
@@ -194,13 +195,13 @@ export default function Home() {
                         </div>
                         <div>
                           <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">单价</p>
-                          <p className="text-base font-medium">¥{order.price}</p>
+                          <p className="text-base font-medium">¥{formatPriceValue(order.price)}</p>
                         </div>
                         <div className="col-span-2">
                           <div className="flex justify-between items-center">
                             <div>
                               <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">总价</p>
-                              <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">¥{order.total_amount}</p>
+                              <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">¥{formatPriceValue(order.total_amount)}</p>
                             </div>
                             <span className={`px-3 py-1 rounded-full text-sm font-medium ${order.payment_status === 0
                               ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
