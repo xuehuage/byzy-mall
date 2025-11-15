@@ -1,10 +1,6 @@
-import { Suspense } from 'react';
-import PaymentContent from './PaymentContent';
+// src/app/payment/page.tsx
+import SimplePaymentContent from '@/components/SimplePaymentContent';
 
 export default function PaymentPage() {
-    return (
-        <Suspense fallback={<div>Loading...</div>}>
-            <PaymentContent />
-        </Suspense>
-    );
+    return <SimplePaymentContent />;
 }

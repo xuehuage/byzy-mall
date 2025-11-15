@@ -5,11 +5,8 @@ import axios, { AxiosInstance, AxiosResponse } from 'axios';
  * 所有API请求均使用此实例，避免重复配置
  */
 const axiosInstance: AxiosInstance = axios.create({
-    // 基础URL从环境变量获取，默认本地API地址
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api',
-    // 超时时间统一设置为5秒
     timeout: 20000,
-    // 默认请求头配置
     headers: {
         'Content-Type': 'application/json'
     }
@@ -20,12 +17,9 @@ const axiosInstance: AxiosInstance = axios.create({
  */
 axiosInstance.interceptors.request.use(
     (config) => {
-        // 从localStorage获取token并添加到请求头
-
         return config;
     },
     (error) => {
-        // 统一处理请求错误
         console.error('请求拦截器错误:', error);
         return Promise.reject(error);
     }
@@ -36,20 +30,24 @@ axiosInstance.interceptors.request.use(
  */
 axiosInstance.interceptors.response.use(
     (response: AxiosResponse) => {
-        // 直接返回响应数据（可根据后端规范统一处理外层结构）
         return response;
     },
     (error) => {
-        // 统一错误处理
         console.error('响应拦截器错误:', error);
-        let message = ''
-        if (error.status === 429) {
-            message = '服务器拥堵，请稍后再试。'
-        }
-        const next = { ...error, message: message }
-        console.error('响应拦截器错误next:', next);
 
-        return Promise.reject(next);
+        if (error.response?.status === 429) {
+            console.error('服务器拥堵，请求被限制');
+            // 触发自定义事件，让组件可以监听并显示蒙版
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('serverOverload'));
+            }
+
+            return Promise.reject(new Error('服务器拥堵，请稍后再试'));
+        }
+
+        // 其他错误处理
+        const message = error.response?.data?.message || error.message || 'message请求失败';
+        return Promise.reject(new Error(message));
     }
 );
 

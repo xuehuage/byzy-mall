@@ -1,3 +1,4 @@
+// components/SimplePaymentContent.tsx
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -7,7 +8,7 @@ import { fetchPaymentStatus, fetchPrepay } from '@/api/paymentApi';
 import { OrderStatus, PrepayResponse } from '@/types/payment.types';
 import { StudentDetailResponse } from '@/types/student.types';
 import { fetchStudentDetail } from '@/api/studentApi';
-import { useWebSocket, WebSocketStatus } from '@/hooks/useWebSocket';
+import { useGlobalWebSocket } from '@/hooks/useGlobalWebSocket';
 import PaymentLayout from '@/components/PaymentLayout';
 import PaymentResult from '@/components/PaymentResult';
 
@@ -21,18 +22,17 @@ interface StoredOrder {
     studentIdNumber: string;
 }
 
-// 🔥 修复：创建稳定的组件，避免重复渲染
-export default function StablePaymentContent() {
+export default function SimplePaymentContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
 
-    // 使用 useRef 来稳定参数
+    // 使用 ref 稳定参数
     const paramsRef = useRef({
         paymentMethod: searchParams.get('method') || '',
         studentIdNumber: searchParams.get('id') || ''
     });
 
-    // 状态管理 - 最小化状态
+    // 状态管理
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [prepayData, setPrepayData] = useState<PrepayResponse['data'] | null>(null);
@@ -41,31 +41,40 @@ export default function StablePaymentContent() {
     const [isExpired, setIsExpired] = useState(false);
     const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
 
-    // WebSocket Hook - 使用稳定的参数
+    // 🔥 使用全局 WebSocket
     const {
         status: websocketStatus,
         connect: connectWebSocket,
         disconnect: disconnectWebSocket,
-    } = useWebSocket({
-        onMessage: (message) => {
-            if (message.type === 'PAYMENT_SUCCESS') {
-                handlePaymentSuccess(message.data);
-            }
-        },
-        autoConnect: false
-    });
+        addMessageHandler,
+        removeMessageHandler
+    } = useGlobalWebSocket();
 
-    // 🔥 修复：使用 useRef 跟踪初始化状态
+    // 防止重复初始化
     const initializedRef = useRef(false);
     const requestLockRef = useRef(false);
+
+    // 处理 WebSocket 消息
+    const handleWebSocketMessage = useCallback((message: any) => {
+        if (message.type === 'PAYMENT_SUCCESS') {
+            handlePaymentSuccess(message.data);
+        }
+    }, []);
 
     // 处理支付成功
     const handlePaymentSuccess = useCallback((paymentData: any) => {
         setOrderStatus('PAID');
         localStorage.removeItem('paymentOrder');
         localStorage.setItem(`paid_${paramsRef.current.studentIdNumber}`, Date.now().toString());
-        setTimeout(() => disconnectWebSocket(), 5000);
-    }, [disconnectWebSocket]);
+    }, []);
+
+    // 初始化消息处理器
+    useEffect(() => {
+        addMessageHandler(handleWebSocketMessage);
+        return () => {
+            removeMessageHandler(handleWebSocketMessage);
+        };
+    }, [addMessageHandler, removeMessageHandler, handleWebSocketMessage]);
 
     // 获取预支付信息
     const getPrepayInfo = useCallback(async () => {
@@ -107,11 +116,12 @@ export default function StablePaymentContent() {
             setRemainingSeconds(PAYMENT_EXPIRY_SECONDS);
             setIsExpired(false);
 
-            // 建立 WebSocket 连接
+            // 🔥 使用全局 WebSocket 连接
             connectWebSocket(prepayResponse.data.client_sn);
 
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error('❌ 获取支付信息失败:', errorMessage);
             setError(errorMessage);
         } finally {
             setLoading(false);
@@ -141,7 +151,7 @@ export default function StablePaymentContent() {
         }
     }, []);
 
-    // 初始化 - 只执行一次
+    // 初始化
     useEffect(() => {
         if (initializedRef.current) return;
         initializedRef.current = true;
@@ -161,6 +171,7 @@ export default function StablePaymentContent() {
 
             // 建立 WebSocket 连接
             connectWebSocket(storedOrder.client_sn);
+            setLoading(false);
         } else {
             // 创建新订单
             getPrepayInfo();
@@ -172,11 +183,7 @@ export default function StablePaymentContent() {
             setOrderStatus('PAID');
             setLoading(false);
         }
-
-        return () => {
-            disconnectWebSocket();
-        };
-    }, [checkStoredOrder, connectWebSocket, disconnectWebSocket, getPrepayInfo]);
+    }, [checkStoredOrder, connectWebSocket, getPrepayInfo]);
 
     // 倒计时
     useEffect(() => {
