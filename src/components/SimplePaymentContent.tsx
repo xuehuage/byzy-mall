@@ -325,11 +325,16 @@ export default function SimplePaymentContent() {
                             <h2 className="text-lg font-semibold text-gray-800 mb-4">扫一扫进行付款</h2>
 
                             <div className="relative mx-auto w-64 h-64 mb-4">
-                                {prepayData?.qr_code && (
-                                    <QRCodeSVG
-                                        value={prepayData.qr_code}
-                                        size={256}
-                                        level="H"
+                                {prepayData?.qr_code_image_url && (
+
+                                    <img
+                                        src={prepayData.qr_code_image_url}
+                                        alt="二维码"
+                                        style={{
+                                            width: 256,
+                                            height: 256,
+                                            display: 'block'
+                                        }}
                                     />
                                 )}
 

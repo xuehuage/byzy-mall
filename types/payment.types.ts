@@ -21,6 +21,7 @@ export interface PrepayResponse {
         subject: string;
         qr_code: string;
         client_sn: string;
+        qr_code_image_url: string;
     };
     message: string;
 }
