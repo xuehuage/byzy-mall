@@ -3,12 +3,11 @@
 
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
-import { fetchPaymentStatus, fetchPrepay } from '@/api/paymentApi';
-import { OrderStatus, PrepayResponse } from '@/types/payment.types';
+import { fetchPrepay } from '@/api/paymentApi';
+import { PrepayResponse } from '@/types/payment.types';
 import { StudentDetailResponse } from '@/types/student.types';
 import { fetchStudentDetail } from '@/api/studentApi';
-import { useGlobalWebSocket } from '@/hooks/useGlobalWebSocket';
+import { usePaymentStatusManager } from '@/hooks/usePaymentStatusManager';
 import PaymentLayout from '@/components/PaymentLayout';
 import PaymentResult from '@/components/PaymentResult';
 
@@ -26,8 +25,8 @@ export default function SimplePaymentContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
 
-    // 使用 ref 稳定参数
-    const paramsRef = useRef({
+    // 使用 ref 存储参数，避免 searchParams 变化导致重渲染
+    const paymentParamsRef = useRef({
         paymentMethod: searchParams.get('method') || '',
         studentIdNumber: searchParams.get('id') || ''
     });
@@ -39,53 +38,42 @@ export default function SimplePaymentContent() {
     const [studentInfo, setStudentInfo] = useState<StudentDetailResponse['data']['student'] | null>(null);
     const [remainingSeconds, setRemainingSeconds] = useState(PAYMENT_EXPIRY_SECONDS);
     const [isExpired, setIsExpired] = useState(false);
-    const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
+    const [orderStatus, setOrderStatus] = useState<'PAID' | 'PAY_CANCELED' | null>(null);
 
-    // 🔥 使用全局 WebSocket
+    // 🔥 使用统一的支付状态管理器
     const {
-        status: websocketStatus,
-        connect: connectWebSocket,
-        disconnect: disconnectWebSocket,
-        addMessageHandler,
-        removeMessageHandler
-    } = useGlobalWebSocket();
+        currentMode,
+        connectionStatus,
+        isWebSocketConnected,
+        isPolling,
+        initializePaymentStatus,
+        manualCheckStatus,
+        cleanup
+    } = usePaymentStatusManager();
 
-    // 防止重复初始化
+    // 防止重复初始化和清理
     const initializedRef = useRef(false);
     const requestLockRef = useRef(false);
-
-    // 处理 WebSocket 消息
-    const handleWebSocketMessage = useCallback((message: any) => {
-        if (message.type === 'PAYMENT_SUCCESS') {
-            handlePaymentSuccess(message.data);
-        }
-    }, []);
+    const componentMountedRef = useRef(true);
 
     // 处理支付成功
     const handlePaymentSuccess = useCallback((paymentData: any) => {
+        console.log('💰 支付成功处理');
         setOrderStatus('PAID');
         localStorage.removeItem('paymentOrder');
-        localStorage.setItem(`paid_${paramsRef.current.studentIdNumber}`, Date.now().toString());
+        localStorage.setItem(`paid_${paymentParamsRef.current.studentIdNumber}`, Date.now().toString());
     }, []);
-
-    // 初始化消息处理器
-    useEffect(() => {
-        addMessageHandler(handleWebSocketMessage);
-        return () => {
-            removeMessageHandler(handleWebSocketMessage);
-        };
-    }, [addMessageHandler, removeMessageHandler, handleWebSocketMessage]);
 
     // 获取预支付信息
     const getPrepayInfo = useCallback(async () => {
-        if (requestLockRef.current) return;
+        if (requestLockRef.current || !componentMountedRef.current) return;
         requestLockRef.current = true;
 
         try {
             setLoading(true);
             setError('');
 
-            const { paymentMethod, studentIdNumber } = paramsRef.current;
+            const { paymentMethod, studentIdNumber } = paymentParamsRef.current;
 
             if (!paymentMethod || !studentIdNumber) {
                 throw new Error('参数错误，无法进行支付');
@@ -93,6 +81,7 @@ export default function SimplePaymentContent() {
 
             // 获取学生详情
             const studentDetail = await fetchStudentDetail(studentIdNumber);
+            if (!componentMountedRef.current) return;
             setStudentInfo(studentDetail.data.student);
 
             // 获取预支付信息
@@ -101,6 +90,7 @@ export default function SimplePaymentContent() {
                 pay_way: paymentMethod
             });
 
+            if (!componentMountedRef.current) return;
             setPrepayData(prepayResponse.data);
 
             // 存储订单信息
@@ -116,18 +106,25 @@ export default function SimplePaymentContent() {
             setRemainingSeconds(PAYMENT_EXPIRY_SECONDS);
             setIsExpired(false);
 
-            // 🔥 使用全局 WebSocket 连接
-            connectWebSocket(prepayResponse.data.client_sn);
+            // 🔥 初始化支付状态监听
+            console.log('🔄 初始化支付状态监听');
+            initializePaymentStatus({
+                clientSn: prepayResponse.data.client_sn,
+                onPaymentSuccess: handlePaymentSuccess
+            });
 
         } catch (err) {
+            if (!componentMountedRef.current) return;
             const errorMessage = err instanceof Error ? err.message : String(err);
             console.error('❌ 获取支付信息失败:', errorMessage);
             setError(errorMessage);
         } finally {
-            setLoading(false);
+            if (componentMountedRef.current) {
+                setLoading(false);
+            }
             requestLockRef.current = false;
         }
-    }, [connectWebSocket]);
+    }, [initializePaymentStatus, handlePaymentSuccess]);
 
     // 检查存储的订单
     const checkStoredOrder = useCallback(() => {
@@ -139,7 +136,7 @@ export default function SimplePaymentContent() {
             const now = Date.now();
 
             // 检查是否过期或学生不匹配
-            if (now > order.expiresAt || order.studentIdNumber !== paramsRef.current.studentIdNumber) {
+            if (now > order.expiresAt || order.studentIdNumber !== paymentParamsRef.current.studentIdNumber) {
                 localStorage.removeItem('paymentOrder');
                 return null;
             }
@@ -151,58 +148,96 @@ export default function SimplePaymentContent() {
         }
     }, []);
 
-    // 初始化
+    // 初始化 - 使用更安全的生命周期管理
     useEffect(() => {
-        if (initializedRef.current) return;
+        componentMountedRef.current = true;
+
+        // 如果已经初始化，直接返回
+        if (initializedRef.current) {
+            return;
+        }
+
         initializedRef.current = true;
 
+        console.log('🏁 开始初始化支付组件');
 
-        const storedOrder = checkStoredOrder();
-        if (storedOrder) {
-            // 从缓存恢复
-            setPrepayData(storedOrder.prepayData);
-            const remainingMs = storedOrder.expiresAt - Date.now();
-            setRemainingSeconds(Math.max(0, Math.floor(remainingMs / 1000)));
+        const init = async () => {
+            const storedOrder = checkStoredOrder();
+            if (storedOrder) {
+                // 从缓存恢复
+                setPrepayData(storedOrder.prepayData);
+                const remainingMs = storedOrder.expiresAt - Date.now();
+                setRemainingSeconds(Math.max(0, Math.floor(remainingMs / 1000)));
 
-            // 获取学生信息
-            fetchStudentDetail(paramsRef.current.studentIdNumber)
-                .then(studentDetail => setStudentInfo(studentDetail.data.student))
-                .catch(console.error);
+                // 获取学生信息
+                try {
+                    const studentDetail = await fetchStudentDetail(paymentParamsRef.current.studentIdNumber);
+                    if (componentMountedRef.current) {
+                        setStudentInfo(studentDetail.data.student);
+                    }
+                } catch (err) {
+                    console.error('获取学生信息失败:', err);
+                }
 
-            // 建立 WebSocket 连接
-            connectWebSocket(storedOrder.client_sn);
-            setLoading(false);
-        } else {
-            // 创建新订单
-            getPrepayInfo();
-        }
+                // 🔥 初始化支付状态监听
+                console.log('🔄 从缓存初始化支付状态监听');
+                initializePaymentStatus({
+                    clientSn: storedOrder.client_sn,
+                    onPaymentSuccess: handlePaymentSuccess
+                });
 
-        // 检查是否已支付
-        const paidTime = localStorage.getItem(`paid_${paramsRef.current.studentIdNumber}`);
-        if (paidTime && (Date.now() - parseInt(paidTime) < 5 * 60 * 1000)) {
-            setOrderStatus('PAID');
-            setLoading(false);
-        }
-    }, [checkStoredOrder, connectWebSocket, getPrepayInfo]);
+                if (componentMountedRef.current) {
+                    setLoading(false);
+                }
+            } else {
+                // 创建新订单
+                await getPrepayInfo();
+            }
+
+            // 检查是否已支付
+            const paidTime = localStorage.getItem(`paid_${paymentParamsRef.current.studentIdNumber}`);
+            if (paidTime && (Date.now() - parseInt(paidTime) < 5 * 60 * 1000)) {
+                setOrderStatus('PAID');
+                setLoading(false);
+            }
+        };
+
+        // 延迟初始化，确保组件稳定
+        const initTimer = setTimeout(() => {
+            if (componentMountedRef.current) {
+                init();
+            }
+        }, 100);
+
+        // 清理函数 - 只在组件真正卸载时执行
+        return () => {
+            console.log('🧹 组件卸载，执行清理');
+            componentMountedRef.current = false;
+            clearTimeout(initTimer);
+            cleanup();
+        };
+    }, []); // 空依赖数组，确保只运行一次
 
     // 倒计时
     useEffect(() => {
         if (loading || isExpired || !prepayData || orderStatus === 'PAID') return;
 
         const timer = setInterval(() => {
-            setRemainingSeconds(prev => {
-                if (prev <= 1) {
-                    setIsExpired(true);
-                    localStorage.removeItem('paymentOrder');
-                    disconnectWebSocket();
-                    return 0;
-                }
-                return prev - 1;
-            });
+            if (componentMountedRef.current) {
+                setRemainingSeconds(prev => {
+                    if (prev <= 1) {
+                        setIsExpired(true);
+                        localStorage.removeItem('paymentOrder');
+                        cleanup();
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }
         }, 1000);
 
         return () => clearInterval(timer);
-    }, [loading, isExpired, prepayData, orderStatus, disconnectWebSocket]);
+    }, [loading, isExpired, prepayData, orderStatus, cleanup]);
 
     // 手动查询支付状态
     const handleManualCheck = async () => {
@@ -210,15 +245,12 @@ export default function SimplePaymentContent() {
         if (!clientSn || loading) return;
 
         try {
-            const response = await fetchPaymentStatus(clientSn);
-            const status = response.data.biz_response.data?.order_status as OrderStatus;
-            setOrderStatus(status);
-
+            const status = await manualCheckStatus();
             if (status === 'PAID') {
-                handlePaymentSuccess(response.data.biz_response.data);
+                console.log('✅ 手动检查确认支付成功');
             }
         } catch (err) {
-            console.error('查询支付状态失败:', err);
+            console.error('手动查询支付状态失败:', err);
         }
     };
 
@@ -227,7 +259,7 @@ export default function SimplePaymentContent() {
 
     // 获取支付方式文本
     const getPaymentMethodText = () => {
-        switch (paramsRef.current.paymentMethod) {
+        switch (paymentParamsRef.current.paymentMethod) {
             case '3': return '微信支付';
             case '2': return '支付宝';
             default: return '';
@@ -240,6 +272,22 @@ export default function SimplePaymentContent() {
         const secs = seconds % 60;
         return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
+
+    // 获取连接状态文本和样式
+    const getConnectionStatusInfo = () => {
+        switch (connectionStatus) {
+            case 'connected':
+                return { text: '实时连接', className: 'text-green-500', icon: '🟢' };
+            case 'degraded':
+                return { text: '轮询模式', className: 'text-yellow-500', icon: '🟡' };
+            case 'connecting':
+                return { text: '连接中...', className: 'text-blue-500', icon: '🔵' };
+            default:
+                return { text: '连接中...', className: 'text-gray-500', icon: '⚪' };
+        }
+    };
+
+    const statusInfo = getConnectionStatusInfo();
 
     // 加载状态
     if (loading && !orderStatus) {
@@ -296,7 +344,7 @@ export default function SimplePaymentContent() {
                                 </div>
                                 <div className="flex justify-between py-2 border-b border-gray-200">
                                     <span className="text-gray-600">身份证号：</span>
-                                    <span className="font-medium">{paramsRef.current.studentIdNumber}</span>
+                                    <span className="font-medium">{paymentParamsRef.current.studentIdNumber}</span>
                                 </div>
                             </div>
                         </div>
@@ -326,7 +374,6 @@ export default function SimplePaymentContent() {
 
                             <div className="relative mx-auto w-64 h-64 mb-4">
                                 {prepayData?.qr_code_image_url && (
-
                                     <img
                                         src={prepayData.qr_code_image_url}
                                         alt="二维码"
@@ -359,13 +406,10 @@ export default function SimplePaymentContent() {
                                 二维码有效期：<span className='text-red-600'>{formatTime(remainingSeconds)}</span>
                             </p>
 
-                            {/* WebSocket 状态显示 */}
-                            <div className={`text-xs ${websocketStatus === 'connected' ? 'text-green-500' :
-                                websocketStatus === 'connecting' ? 'text-yellow-500' :
-                                    'text-gray-500'
-                                } text-center mt-2`}>
-                                {websocketStatus === 'connected' ? '实时连接' :
-                                    websocketStatus === 'connecting' ? '连接中...' : '连接断开'}
+                            {/* 连接状态显示 */}
+                            <div className={`text-xs ${statusInfo.className} text-center mt-2`}>
+                                {statusInfo.icon} {statusInfo.text}
+                                {currentMode === 'polling' && ' (降级模式)'}
                             </div>
                         </div>
 
