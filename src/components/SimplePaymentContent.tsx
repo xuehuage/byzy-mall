@@ -148,6 +148,16 @@ export default function SimplePaymentContent() {
         }
     }, []);
 
+    // 计算剩余时间的函数
+    const calculateRemainingSeconds = useCallback(() => {
+        const storedOrder = checkStoredOrder();
+        if (!storedOrder) return 0;
+        
+        const now = Date.now();
+        const remainingMs = storedOrder.expiresAt - now;
+        return Math.max(0, Math.floor(remainingMs / 1000));
+    }, [checkStoredOrder]);
+
     // 初始化 - 使用更安全的生命周期管理
     useEffect(() => {
         componentMountedRef.current = true;
@@ -168,9 +178,7 @@ export default function SimplePaymentContent() {
                 setPrepayData(storedOrder.prepayData);
                 
                 // 使用实时计算而不是固定的剩余时间
-                const now = Date.now();
-                const remainingMs = storedOrder.expiresAt - now;
-                const initialRemainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+                const initialRemainingSeconds = calculateRemainingSeconds();
                 setRemainingSeconds(initialRemainingSeconds);
                 
                 // 如果已经过期，立即设置过期状态并清理
@@ -230,47 +238,87 @@ export default function SimplePaymentContent() {
         };
     }, []); // 空依赖数组，确保只运行一次
 
-    // 实时倒计时效果 - 修复页面切换BUG
+    // 基于系统时间的精确倒计时 - 修复所有定时器问题
     useEffect(() => {
         if (loading || isExpired || !prepayData || orderStatus === 'PAID') return;
 
-        let timer: NodeJS.Timeout;
+        // 立即计算并设置一次
+        const currentRemaining = calculateRemainingSeconds();
+        setRemainingSeconds(currentRemaining);
+        
+        if (currentRemaining <= 0) {
+            setIsExpired(true);
+            localStorage.removeItem('paymentOrder');
+            console.log('⏰ 订单已过期，清理所有监听');
+            cleanup();
+            return;
+        }
 
-        const updateCountdown = () => {
-            const storedOrder = checkStoredOrder();
-            if (!storedOrder) {
-                if (timer) clearInterval(timer);
-                return;
-            }
-
-            const now = Date.now();
-            const remainingMs = storedOrder.expiresAt - now;
-            const remainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+        // 设置一个定时器，但只在需要更新显示时运行
+        let timeoutId: NodeJS.Timeout;
+        
+        const scheduleNextUpdate = () => {
+            const nowRemaining = calculateRemainingSeconds();
             
-            setRemainingSeconds(remainingSeconds);
-
-            if (remainingSeconds <= 0) {
+            // 只有当剩余时间变化时才更新状态
+            if (nowRemaining !== remainingSeconds) {
+                setRemainingSeconds(nowRemaining);
+            }
+            
+            if (nowRemaining <= 0) {
                 setIsExpired(true);
                 localStorage.removeItem('paymentOrder');
-                
-                // 🔥 确保在倒计时结束时正确清理所有监听
                 console.log('⏰ 订单已过期，清理所有监听');
                 cleanup();
-                
-                if (timer) clearInterval(timer);
+                return;
             }
+            
+            // 根据剩余时间动态调整更新频率
+            let nextUpdateDelay = 1000; // 默认1秒
+            
+            if (nowRemaining > 60) {
+                nextUpdateDelay = 5000; // 超过1分钟时，每5秒更新一次
+            } else if (nowRemaining > 10) {
+                nextUpdateDelay = 1000; // 10秒到1分钟，每秒更新
+            } else {
+                nextUpdateDelay = 200; // 最后10秒，每200毫秒更新以获得更流畅的体验
+            }
+            
+            timeoutId = setTimeout(scheduleNextUpdate, nextUpdateDelay);
         };
-
-        // 立即执行一次
-        updateCountdown();
         
-        // 每秒更新
-        timer = setInterval(updateCountdown, 1000);
+        timeoutId = setTimeout(scheduleNextUpdate, 1000);
 
         return () => {
-            if (timer) clearInterval(timer);
+            if (timeoutId) clearTimeout(timeoutId);
         };
-    }, [loading, isExpired, prepayData, orderStatus, cleanup, checkStoredOrder]);
+    }, [loading, isExpired, prepayData, orderStatus, cleanup, calculateRemainingSeconds, remainingSeconds]);
+
+    // 添加页面可见性变化监听
+    useEffect(() => {
+        if (loading || isExpired || !prepayData || orderStatus === 'PAID') return;
+        
+        const handleVisibilityChange = () => {
+            if (!document.hidden) {
+                // 页面变为可见时，立即重新计算剩余时间
+                const currentRemaining = calculateRemainingSeconds();
+                setRemainingSeconds(currentRemaining);
+                
+                if (currentRemaining <= 0) {
+                    setIsExpired(true);
+                    localStorage.removeItem('paymentOrder');
+                    console.log('⏰ 页面恢复时发现订单已过期，清理所有监听');
+                    cleanup();
+                }
+            }
+        };
+        
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [loading, isExpired, prepayData, orderStatus, cleanup, calculateRemainingSeconds]);
 
     // 手动查询支付状态
     const handleManualCheck = async () => {
@@ -408,7 +456,7 @@ export default function SimplePaymentContent() {
 
                         {/* 支付二维码 */}
                         <div className="text-center">
-                            <h2 className="text-lg font-semibold text-gray-800 mb-4">扫一扫进行付款</h2>
+                            <h2 className="text-lg font-semibold text-gray-800 ">二维码有效期：<span className='text-red-600'>{formatTime(remainingSeconds)}</span></h2>
 
                             <div className="relative mx-auto w-64 h-64 mb-4">
                                 {prepayData?.qr_code_image_url && (
@@ -440,8 +488,8 @@ export default function SimplePaymentContent() {
                             <p className="text-sm text-gray-600 mb-2">
                                 请保存二维码到相册，用{getPaymentMethodText()}扫一扫进行付款
                             </p>
-                            <p className="text-sm text-gray-600">
-                                二维码有效期：<span className='text-red-600'>{formatTime(remainingSeconds)}</span>
+                            <p className="text-sm text-red-600">
+                                *请在二维码失效前扫码
                             </p>
 
                             {/* 连接状态显示 */}
@@ -460,7 +508,7 @@ export default function SimplePaymentContent() {
                                     className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                                     disabled={loading}
                                 >
-                                    {loading ? '查询中...' : '已付款'}
+                                    {loading ? '查询中...' : '我已付款'}
                                 </button>
                             )}
                         </div>
