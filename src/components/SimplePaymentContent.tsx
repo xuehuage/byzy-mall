@@ -166,25 +166,37 @@ export default function SimplePaymentContent() {
             if (storedOrder) {
                 // 从缓存恢复
                 setPrepayData(storedOrder.prepayData);
-                const remainingMs = storedOrder.expiresAt - Date.now();
-                setRemainingSeconds(Math.max(0, Math.floor(remainingMs / 1000)));
-
-                // 获取学生信息
-                try {
-                    const studentDetail = await fetchStudentDetail(paymentParamsRef.current.studentIdNumber);
-                    if (componentMountedRef.current) {
-                        setStudentInfo(studentDetail.data.student);
+                
+                // 使用实时计算而不是固定的剩余时间
+                const now = Date.now();
+                const remainingMs = storedOrder.expiresAt - now;
+                const initialRemainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+                setRemainingSeconds(initialRemainingSeconds);
+                
+                // 如果已经过期，立即设置过期状态并清理
+                if (initialRemainingSeconds <= 0) {
+                    setIsExpired(true);
+                    localStorage.removeItem('paymentOrder');
+                    console.log('⏰ 初始化时发现订单已过期，立即清理');
+                    cleanup(); // 🔥 确保过期订单立即清理
+                } else {
+                    // 获取学生信息
+                    try {
+                        const studentDetail = await fetchStudentDetail(paymentParamsRef.current.studentIdNumber);
+                        if (componentMountedRef.current) {
+                            setStudentInfo(studentDetail.data.student);
+                        }
+                    } catch (err) {
+                        console.error('获取学生信息失败:', err);
                     }
-                } catch (err) {
-                    console.error('获取学生信息失败:', err);
-                }
 
-                // 🔥 初始化支付状态监听
-                console.log('🔄 从缓存初始化支付状态监听');
-                initializePaymentStatus({
-                    clientSn: storedOrder.client_sn,
-                    onPaymentSuccess: handlePaymentSuccess
-                });
+                    // 🔥 只有未过期的订单才初始化支付状态监听
+                    console.log('🔄 从缓存初始化支付状态监听');
+                    initializePaymentStatus({
+                        clientSn: storedOrder.client_sn,
+                        onPaymentSuccess: handlePaymentSuccess
+                    });
+                }
 
                 if (componentMountedRef.current) {
                     setLoading(false);
@@ -218,26 +230,47 @@ export default function SimplePaymentContent() {
         };
     }, []); // 空依赖数组，确保只运行一次
 
-    // 倒计时
+    // 实时倒计时效果 - 修复页面切换BUG
     useEffect(() => {
         if (loading || isExpired || !prepayData || orderStatus === 'PAID') return;
 
-        const timer = setInterval(() => {
-            if (componentMountedRef.current) {
-                setRemainingSeconds(prev => {
-                    if (prev <= 1) {
-                        setIsExpired(true);
-                        localStorage.removeItem('paymentOrder');
-                        cleanup();
-                        return 0;
-                    }
-                    return prev - 1;
-                });
-            }
-        }, 1000);
+        let timer: NodeJS.Timeout;
 
-        return () => clearInterval(timer);
-    }, [loading, isExpired, prepayData, orderStatus, cleanup]);
+        const updateCountdown = () => {
+            const storedOrder = checkStoredOrder();
+            if (!storedOrder) {
+                if (timer) clearInterval(timer);
+                return;
+            }
+
+            const now = Date.now();
+            const remainingMs = storedOrder.expiresAt - now;
+            const remainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+            
+            setRemainingSeconds(remainingSeconds);
+
+            if (remainingSeconds <= 0) {
+                setIsExpired(true);
+                localStorage.removeItem('paymentOrder');
+                
+                // 🔥 确保在倒计时结束时正确清理所有监听
+                console.log('⏰ 订单已过期，清理所有监听');
+                cleanup();
+                
+                if (timer) clearInterval(timer);
+            }
+        };
+
+        // 立即执行一次
+        updateCountdown();
+        
+        // 每秒更新
+        timer = setInterval(updateCountdown, 1000);
+
+        return () => {
+            if (timer) clearInterval(timer);
+        };
+    }, [loading, isExpired, prepayData, orderStatus, cleanup, checkStoredOrder]);
 
     // 手动查询支付状态
     const handleManualCheck = async () => {
@@ -275,6 +308,11 @@ export default function SimplePaymentContent() {
 
     // 获取连接状态文本和样式
     const getConnectionStatusInfo = () => {
+        // 🔥 如果订单已过期，强制显示"已断开"
+        if (isExpired) {
+            return { text: '已断开', className: 'text-gray-500', icon: '⚪' };
+        }
+
         switch (connectionStatus) {
             case 'connected':
                 return { text: '实时连接', className: 'text-green-500', icon: '🟢' };
@@ -287,7 +325,7 @@ export default function SimplePaymentContent() {
         }
     };
 
-    const statusInfo = getConnectionStatusInfo();
+    // const statusInfo = getConnectionStatusInfo();
 
     // 加载状态
     if (loading && !orderStatus) {
@@ -407,10 +445,10 @@ export default function SimplePaymentContent() {
                             </p>
 
                             {/* 连接状态显示 */}
-                            <div className={`text-xs ${statusInfo.className} text-center mt-2`}>
+                            {/* <div className={`text-xs ${statusInfo.className} text-center mt-2`}>
                                 {statusInfo.icon} {statusInfo.text}
                                 {currentMode === 'polling' && ' (降级模式)'}
-                            </div>
+                            </div> */}
                         </div>
 
                         {/* 操作按钮 */}
